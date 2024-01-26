@@ -7,13 +7,19 @@ from torchvision import transforms
 import copy
 import os
 from utils import *
+import wandb
+from gymnasium.wrappers import RecordVideo
 
 NUM_EPISODES = 1000
-EPSILON = 0.05
+EPSILON = 1.0
 FRAME_STACK_SIZE = 4
 BATCH_SIZE = 32
+RECORD_STEPS = 100000
 
 device = get_device()
+
+def step_trigger(step_count):
+    return step_count % RECORD_STEPS == 0
 
 def choose_action(state, env, q_network):
     if random.random() < EPSILON:
@@ -23,7 +29,7 @@ def choose_action(state, env, q_network):
         return torch.argmax(output).item()
 
 def replay(replay_buffer: deque, q_network, target_q_network, optimizer, gamma=0.99):
-    if len(replay_buffer) < 10*BATCH_SIZE:
+    if len(replay_buffer) < BATCH_SIZE:
         return
     
     experiences = random.sample(replay_buffer, BATCH_SIZE)
@@ -52,15 +58,18 @@ def replay(replay_buffer: deque, q_network, target_q_network, optimizer, gamma=0
     loss.backward()
     optimizer.step()
 
-env = gym.make("MsPacman-v4", render_mode=None)
+# env = gym.make("MsPacman-v4", render_mode=None)
+env = gym.make("ALE/MsPacman-v5", render_mode="rgb_array")
+video_folder = 'videos/'
+env = RecordVideo(env, video_folder=video_folder, step_trigger=step_trigger)
 
 # Initialize replay buffer
-replay_buffer = deque(maxlen=30000)
+replay_buffer = deque(maxlen=100000)
 
 transform = transforms.Compose([
     transforms.ToPILImage(),
     transforms.Grayscale(),
-    transforms.Resize((84, 84)), # TODO should actually be resized and then cropped to 84x84
+    transforms.Resize((64, 64)), # TODO should actually be resized and then cropped to 84x84
     transforms.ToTensor() 
 ])
 
@@ -78,7 +87,10 @@ if os.path.exists(saved_model_path):
 
 steps = 0
 # Optimizer for Q-Network
-optimizer = torch.optim.Adam(q_network.parameters(), lr=2.5e-4)
+optimizer = torch.optim.Adam(q_network.parameters(), lr=1e-4)
+
+wandb.login()
+wandb.init(project="DQN-PacMan", mode="online")
 for episode in range(NUM_EPISODES):
     observation, info = env.reset()
     observation_tensor = transform(observation).unsqueeze(0).to(device)
@@ -90,6 +102,12 @@ for episode in range(NUM_EPISODES):
     frame = 0
     score = 0
     best_score = 0
+    
+    # Linear epsilon annealing over 1 million steps
+    EPSILON-=1/1000000
+    if EPSILON < 0.1:
+        EPSILON = 0.1
+
     while not terminal:
         steps+=1 
         frame += 1
@@ -105,15 +123,22 @@ for episode in range(NUM_EPISODES):
         # Store experience in replay buffer
         replay_buffer.append((state, action, reward, next_state, terminal))
         
-        if steps % 4:
+        if steps % 2:
             replay(replay_buffer, q_network, target_q_network, optimizer)
 
         # Periodically update the target network for stability
-        if steps % 500 == 0:
+        if steps % 250 == 0:
             target_network = copy.deepcopy(q_network).to(device)
             torch.save(target_network.state_dict(), 'saved_model.pt')
-        if score > best_score:
-            best_score = score
-            torch.save(q_network.state_dict(), 'saved_best_model.pt')
-    
-    print(f"Episode score: {score}")
+        if steps % 1000 == 0:  # Close recording after 1000 steps
+            env.close_video_recorder()
+    if score > best_score:
+        best_score = score
+        torch.save(q_network.state_dict(), 'saved_best_model.pt')
+
+    print(f"Episode score: {score}, Epsilon: {EPSILON}")
+    wandb.log({
+    "EpisodeScore": score,
+    "Epsilon": EPSILON
+})
+
