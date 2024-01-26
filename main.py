@@ -10,7 +10,7 @@ from utils import *
 import wandb
 from gymnasium.wrappers import RecordVideo
 
-NUM_EPISODES = 1000
+NUM_EPISODES = 1000000
 EPSILON = 1.0
 FRAME_STACK_SIZE = 4
 BATCH_SIZE = 32
@@ -19,6 +19,8 @@ RECORD_STEPS = 100000
 device = get_device()
 
 def step_trigger(step_count):
+    if step_count == 0:
+        return False
     return step_count % RECORD_STEPS == 0
 
 def choose_action(state, env, q_network):
@@ -103,12 +105,13 @@ for episode in range(NUM_EPISODES):
     score = 0
     best_score = 0
     
-    # Linear epsilon annealing over 1 million steps
-    EPSILON-=1/1000000
-    if EPSILON < 0.1:
-        EPSILON = 0.1
 
     while not terminal:
+        # Linear epsilon annealing over 1 million steps (rougly)
+        EPSILON-=1/1000000
+        if EPSILON < 0.1:
+            EPSILON = 0.1
+
         steps+=1 
         frame += 1
         state = torch.cat(list(frame_stack), dim=1).to(device)  # Stack the frames
@@ -123,14 +126,14 @@ for episode in range(NUM_EPISODES):
         # Store experience in replay buffer
         replay_buffer.append((state, action, reward, next_state, terminal))
         
-        if steps % 2:
-            replay(replay_buffer, q_network, target_q_network, optimizer)
+        # if steps % 2:
+        replay(replay_buffer, q_network, target_q_network, optimizer)
 
         # Periodically update the target network for stability
         if steps % 250 == 0:
             target_network = copy.deepcopy(q_network).to(device)
             torch.save(target_network.state_dict(), 'saved_model.pt')
-        if steps % 1000 == 0:  # Close recording after 1000 steps
+        if steps % 10000 == 0:  # Close recording after 10000 steps
             env.close_video_recorder()
     if score > best_score:
         best_score = score
@@ -138,7 +141,8 @@ for episode in range(NUM_EPISODES):
 
     print(f"Episode score: {score}, Epsilon: {EPSILON}")
     wandb.log({
-    "EpisodeScore": score,
-    "Epsilon": EPSILON
+    "Episode Score": score,
+    "Epsilon": EPSILON,
+    "Num Steps": steps
 })
 
