@@ -6,13 +6,14 @@ import torch
 from torchvision import transforms
 import copy
 import os
+from utils import *
 
 NUM_EPISODES = 1000
 EPSILON = 0.05
 FRAME_STACK_SIZE = 4
 BATCH_SIZE = 32
 
-device = torch.device('mps')
+device = get_device()
 
 def choose_action(state, env, q_network):
     if random.random() < EPSILON:
@@ -103,7 +104,8 @@ for episode in range(NUM_EPISODES):
         # Store experience in replay buffer
         replay_buffer.append((state, action, reward, next_state, terminal))
         
-        replay(replay_buffer, q_network, target_q_network, optimizer)
+        if steps % 4:
+            replay(replay_buffer, q_network, target_q_network, optimizer)
 
         # Periodically update the target network for stability
         if steps % 500 == 0:
