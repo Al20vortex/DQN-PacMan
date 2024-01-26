@@ -14,14 +14,20 @@ NUM_EPISODES = 1000000
 EPSILON = 1.0
 FRAME_STACK_SIZE = 4
 BATCH_SIZE = 32
-RECORD_STEPS = 100000
+# For recording
+RECORD_INTERVAL = 250000  # How often to record
+RECORD_STEPS = 20000  # how many steps to record
 
 device = get_device()
-
+recorded_steps = 0
 def step_trigger(step_count):
+    global recorded_steps
     if step_count == 0:
         return False
-    return step_count % RECORD_STEPS == 0
+    if step_count % RECORD_INTERVAL == 0:
+        recorded_steps = 0  # Start the recorded steps count
+        return True
+    return False
 
 def choose_action(state, env, q_network):
     if random.random() < EPSILON:
@@ -61,7 +67,7 @@ def replay(replay_buffer: deque, q_network, target_q_network, optimizer, gamma=0
     optimizer.step()
 
 # env = gym.make("MsPacman-v4", render_mode=None)
-env = gym.make("ALE/MsPacman-v5", render_mode="rgb_array")
+env = gym.make("MsPacman-v4", render_mode="rgb_array")
 video_folder = 'videos/'
 env = RecordVideo(env, video_folder=video_folder, step_trigger=step_trigger)
 
@@ -87,25 +93,31 @@ if os.path.exists(saved_model_path):
     q_network.load_state_dict(torch.load(saved_model_path, map_location=device))
     target_q_network.load_state_dict(torch.load(saved_model_path, map_location=device))
 
-steps = 0
 # Optimizer for Q-Network
 optimizer = torch.optim.Adam(q_network.parameters(), lr=1e-4)
 
 wandb.login()
 wandb.init(project="DQN-PacMan", mode="online")
+
+# Initialize steps count
+steps = 0
+
+# Main Training Loop
 for episode in range(NUM_EPISODES):
     observation, info = env.reset()
     observation_tensor = transform(observation).unsqueeze(0).to(device)
+
+    # initialize frame stack
     frame_stack = deque(maxlen=FRAME_STACK_SIZE)
     for _ in range(FRAME_STACK_SIZE):
         frame_stack.append(observation_tensor)
-    # initialize frame stack
+
+    # Initialize counters
     terminal = False
     frame = 0
     score = 0
     best_score = 0
     
-
     while not terminal:
         # Linear epsilon annealing over 1 million steps (rougly)
         EPSILON-=1/1000000
@@ -126,14 +138,13 @@ for episode in range(NUM_EPISODES):
         # Store experience in replay buffer
         replay_buffer.append((state, action, reward, next_state, terminal))
         
-        # if steps % 2:
         replay(replay_buffer, q_network, target_q_network, optimizer)
 
         # Periodically update the target network for stability
         if steps % 250 == 0:
             target_network = copy.deepcopy(q_network).to(device)
             torch.save(target_network.state_dict(), 'saved_model.pt')
-        if steps % 10000 == 0:  # Close recording after 10000 steps
+        if (recorded_steps + 1) % RECORD_STEPS == 0:  # Close recording after RECORD_STEPS recorded steps
             env.close_video_recorder()
     if score > best_score:
         best_score = score
