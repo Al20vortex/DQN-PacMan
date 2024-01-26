@@ -23,7 +23,7 @@ def choose_action(state, env, q_network):
         return torch.argmax(output).item()
 
 def replay(replay_buffer: deque, q_network, target_q_network, optimizer, gamma=0.99):
-    if len(replay_buffer) < BATCH_SIZE:
+    if len(replay_buffer) < 10*BATCH_SIZE:
         return
     
     experiences = random.sample(replay_buffer, BATCH_SIZE)
@@ -39,14 +39,15 @@ def replay(replay_buffer: deque, q_network, target_q_network, optimizer, gamma=0
     current_q_values = q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
 
     # Get Q values for next states
-    next_q_values = target_q_network(next_states).max(1)[0]
-    next_q_values[terminals] = 0.  # Terminal states should be 0
+    with torch.no_grad():
+        next_q_values = target_q_network(next_states).max(1)[0]
+        next_q_values[terminals] = 0.  # Terminal states should be 0
 
     # Compute the target Q values
     target_q_values = rewards + gamma * next_q_values
 
     # Compute loss and optimize the model
-    loss = torch.nn.MSELoss()(current_q_values, target_q_values)
+    loss = torch.nn.HuberLoss()(current_q_values, target_q_values)
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
@@ -77,7 +78,7 @@ if os.path.exists(saved_model_path):
 
 steps = 0
 # Optimizer for Q-Network
-optimizer = torch.optim.Adam(q_network.parameters(), lr=0.001)
+optimizer = torch.optim.Adam(q_network.parameters(), lr=2.5e-4)
 for episode in range(NUM_EPISODES):
     observation, info = env.reset()
     observation_tensor = transform(observation).unsqueeze(0).to(device)
