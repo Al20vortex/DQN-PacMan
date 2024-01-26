@@ -74,6 +74,7 @@ if os.path.exists(saved_model_path):
     q_network.load_state_dict(torch.load(saved_model_path, map_location=device))
     target_q_network.load_state_dict(torch.load(saved_model_path, map_location=device))
 
+steps = 0
 # Optimizer for Q-Network
 optimizer = torch.optim.Adam(q_network.parameters(), lr=0.001)
 for episode in range(NUM_EPISODES):
@@ -88,6 +89,7 @@ for episode in range(NUM_EPISODES):
     score = 0
     best_score = 0
     while not terminal:
+        steps+=1 
         frame += 1
         state = torch.cat(list(frame_stack), dim=1).to(device)  # Stack the frames
         action = choose_action(state, env, q_network)
@@ -104,7 +106,7 @@ for episode in range(NUM_EPISODES):
         replay(replay_buffer, q_network, target_q_network, optimizer)
 
         # Periodically update the target network for stability
-        if frame % 3 == 0:
+        if steps % 500 == 0:
             target_network = copy.deepcopy(q_network).to(device)
             torch.save(target_network.state_dict(), 'saved_model.pt')
         if score > best_score:
