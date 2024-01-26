@@ -5,6 +5,7 @@ import random
 import torch
 from torchvision import transforms
 import copy
+import os
 
 NUM_EPISODES = 1000
 EPSILON = 0.05
@@ -49,10 +50,10 @@ def replay(replay_buffer: deque, q_network, target_q_network, optimizer, gamma=0
     loss.backward()
     optimizer.step()
 
-env = gym.make("ALE/MsPacman-v5", render_mode=None)
+env = gym.make("MsPacman-v4", render_mode=None)
 
 # Initialize replay buffer
-replay_buffer = deque(maxlen=10000)
+replay_buffer = deque(maxlen=30000)
 
 transform = transforms.Compose([
     transforms.ToPILImage(),
@@ -67,6 +68,11 @@ q_network = QNetwork(env.action_space.n).to(device)
 # Initialize target action-value function Q' with weights of Q
 target_q_network = QNetwork(env.action_space.n).to(device)
 target_q_network.load_state_dict(q_network.state_dict())
+
+saved_model_path = 'saved_best_model.pt'
+if os.path.exists(saved_model_path):
+    q_network.load_state_dict(torch.load(saved_model_path, map_location=device))
+    target_q_network.load_state_dict(torch.load(saved_model_path, map_location=device))
 
 # Optimizer for Q-Network
 optimizer = torch.optim.Adam(q_network.parameters(), lr=0.001)
@@ -98,7 +104,7 @@ for episode in range(NUM_EPISODES):
         replay(replay_buffer, q_network, target_q_network, optimizer)
 
         # Periodically update the target network for stability
-        if frame % 10 == 0:
+        if frame % 3 == 0:
             target_network = copy.deepcopy(q_network).to(device)
             torch.save(target_network.state_dict(), 'saved_model.pt')
         if score > best_score:
