@@ -13,22 +13,11 @@ from gymnasium.wrappers import RecordVideo
 NUM_EPISODES = 1000000
 EPSILON = 1.0
 FRAME_STACK_SIZE = 4
-BATCH_SIZE = 32
+BATCH_SIZE = 64
 # For recording
-RECORD_INTERVAL = 250000  # How often to record
-RECORD_STEPS = 20000  # how many steps to record
+RECORD_INTERVAL = 1000  # How often to record
 
 device = get_device()
-recorded_steps = 0
-def step_trigger(step_count):
-    global recorded_steps
-    if step_count == 0:
-        return False
-    if step_count % RECORD_INTERVAL == 0:
-        recorded_steps = 0  # Start the recorded steps count
-        return True
-    return False
-
 def choose_action(state, env, q_network):
     if random.random() < EPSILON:
         return env.action_space.sample()
@@ -36,10 +25,9 @@ def choose_action(state, env, q_network):
         output = q_network(state)
         return torch.argmax(output).item()
 
-def replay(replay_buffer: deque, q_network, target_q_network, optimizer, gamma=0.99):
-    if len(replay_buffer) < BATCH_SIZE:
+def replay(replay_buffer: deque, q_network, target_q_network, optimizer, gamma=0.999):
+    if len(replay_buffer) < replay_buffer.maxlen//2:
         return
-    
     experiences = random.sample(replay_buffer, BATCH_SIZE)
     states, actions, rewards, next_states, terminals = zip(*experiences)
 
@@ -47,15 +35,14 @@ def replay(replay_buffer: deque, q_network, target_q_network, optimizer, gamma=0
     actions = torch.tensor(actions).to(device)
     rewards = torch.tensor(rewards).to(device)
     next_states = torch.cat(next_states).to(device)
-    terminals = torch.tensor(terminals).to(device)
-
+    terminals = torch.tensor(terminals, dtype=torch.float32).to(device)
     # Get Q values for current states
-    current_q_values = q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+    current_q_values = q_network(states).gather(1, actions.unsqueeze(-1)).squeeze(-1)
 
     # Get Q values for next states
     with torch.no_grad():
-        next_q_values = target_q_network(next_states).max(1)[0]
-        next_q_values[terminals] = 0.  # Terminal states should be 0
+        next_q_values = torch.amax(target_q_network(next_states), dim=1)
+        next_q_values = next_q_values @ (1-terminals)  # zero out the terminal states
 
     # Compute the target Q values
     target_q_values = rewards + gamma * next_q_values
@@ -67,9 +54,8 @@ def replay(replay_buffer: deque, q_network, target_q_network, optimizer, gamma=0
     optimizer.step()
 
 # env = gym.make("MsPacman-v4", render_mode=None)
-env = gym.make("MsPacman-v4", render_mode="rgb_array")
-video_folder = 'videos/'
-env = RecordVideo(env, video_folder=video_folder, step_trigger=step_trigger)
+env = gym.make("Breakout-v4", render_mode="rgb_array")
+env = gym.wrappers.RecordVideo(env, 'videos/', episode_trigger=lambda x: x % RECORD_INTERVAL == 0, video_length=0)
 
 # Initialize replay buffer
 replay_buffer = deque(maxlen=100000)
@@ -77,7 +63,7 @@ replay_buffer = deque(maxlen=100000)
 transform = transforms.Compose([
     transforms.ToPILImage(),
     transforms.Grayscale(),
-    transforms.Resize((64, 64)), # TODO should actually be resized and then cropped to 84x84
+    transforms.Resize((84, 84)), # TODO should actually be resized and then cropped to 84x84
     transforms.ToTensor() 
 ])
 
@@ -94,10 +80,10 @@ if os.path.exists(saved_model_path):
     target_q_network.load_state_dict(torch.load(saved_model_path, map_location=device))
 
 # Optimizer for Q-Network
-optimizer = torch.optim.Adam(q_network.parameters(), lr=1e-4)
+optimizer = torch.optim.Adam(q_network.parameters(), lr=5e-4)
 
 wandb.login()
-wandb.init(project="DQN-PacMan", mode="online")
+wandb.init(project="DQN-Breakout", mode="online")
 
 # Initialize steps count
 steps = 0
@@ -120,9 +106,11 @@ for episode in range(NUM_EPISODES):
     
     while not terminal:
         # Linear epsilon annealing over 1 million steps (rougly)
-        EPSILON-=1/1000000
+        EPSILON = 1.0 - steps/1000000
         if EPSILON < 0.1:
             EPSILON = 0.1
+        if episode % 100 == 0:
+            EPSILON = 0.0
 
         steps+=1 
         frame += 1
@@ -141,19 +129,25 @@ for episode in range(NUM_EPISODES):
         replay(replay_buffer, q_network, target_q_network, optimizer)
 
         # Periodically update the target network for stability
-        if steps % 250 == 0:
+        if steps % 10000 == 0:
             target_network = copy.deepcopy(q_network).to(device)
             torch.save(target_network.state_dict(), 'saved_model.pt')
-        if (recorded_steps + 1) % RECORD_STEPS == 0:  # Close recording after RECORD_STEPS recorded steps
-            env.close_video_recorder()
     if score > best_score:
         best_score = score
         torch.save(q_network.state_dict(), 'saved_best_model.pt')
 
     print(f"Episode score: {score}, Epsilon: {EPSILON}")
-    wandb.log({
-    "Episode Score": score,
-    "Epsilon": EPSILON,
-    "Num Steps": steps
-})
+    if episode % RECORD_INTERVAL == 0:
+        wandb.log({
+        "Episode Score": score,
+        "Test Score": score,
+        "Epsilon": EPSILON,
+        "Num Steps": steps
+        })
+    else:
+        wandb.log({
+        "Episode Score": score,
+        "Epsilon": EPSILON,
+        "Num Steps": steps
+        })
 

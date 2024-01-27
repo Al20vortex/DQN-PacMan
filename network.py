@@ -21,7 +21,7 @@ class QNetwork(nn.Module):
             nn.BatchNorm2d(16),
             nn.LeakyReLU(),
             nn.Flatten(),
-            nn.Linear(256, 32),
+            nn.Linear(576, 32),
             nn.LeakyReLU(),
             nn.Linear(32, action_space_size),
         )
