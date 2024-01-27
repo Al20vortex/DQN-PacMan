@@ -33,7 +33,9 @@ def replay(replay_buffer: deque, q_network, target_q_network, optimizer, gamma=0
 
     states = torch.cat(states).to(device)
     actions = torch.tensor(actions).to(device)
-    rewards = torch.tensor(rewards).to(device)
+    # Clip rewards to be within the range [-1, 1]
+    rewards = torch.clamp(torch.tensor(rewards).to(device), -1.0, 1.0)
+    rewards = torch.tensor([max(min(r, 1.0), -1.0) for r in rewards]).to(device)
     next_states = torch.cat(next_states).to(device)
     terminals = torch.tensor(terminals, dtype=torch.float32).to(device)
     # Get Q values for current states
@@ -55,6 +57,7 @@ def replay(replay_buffer: deque, q_network, target_q_network, optimizer, gamma=0
 
 # env = gym.make("MsPacman-v4", render_mode=None)
 env = gym.make("Breakout-v4", render_mode="rgb_array")
+env.metadata["noop_max"] = 10
 env = gym.wrappers.RecordVideo(env, 'videos/', episode_trigger=lambda x: x % RECORD_INTERVAL == 0, video_length=0)
 
 # Initialize replay buffer
